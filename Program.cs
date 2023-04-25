@@ -42,6 +42,16 @@ class Program
                 Console.WriteLine("Debugger.IsAttached hook detected.");
             }
         }
+        
+        IntPtr ntDll = NativeLibrary.Load("ntdll.dll");
+        IntPtr ntRaiseHardErrorPtr = getProcAddress(ntDll, "NtRaiseHardError");
+        byte ntRaiseHardErrorOpCode = Unsafe.Read<byte>((void*)ntRaiseHardErrorPtr);
+
+        if (ntRaiseHardErrorOpCode == 0xE9)
+        {
+            Console.WriteLine($"NtRaiseHardError hook detected.");
+            hooksFoundCount++;
+        }
 
         if (hooksFoundCount == 0)
         {
