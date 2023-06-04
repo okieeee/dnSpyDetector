@@ -1,71 +1,74 @@
 ﻿// Credits to: https://github.com/XenocodeRCE/dnSpyDetector/tree/master, i did just rewrite it using NativeLibrary and Unsafe.  
 
+using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 class Program
 {
+    static IntPtr kernel32;
+    static IntPtr ntDll;
+
     unsafe static void Main(string[] args)
     {
         int hooksFoundCount = 0;
 
-        IntPtr kernel32 = NativeLibrary.Load("kernel32.dll");
-        IntPtr getProcAddressPtr = NativeLibrary.GetExport(kernel32, "GetProcAddress");
-        var getProcAddress = Marshal.GetDelegateForFunctionPointer<GetProcAddressDelegate>(getProcAddressPtr);
+        kernel32 = NativeLibrary.Load("kernel32.dll");
+        ntDll = NativeLibrary.Load("ntdll.dll");
 
-        IntPtr isDebuggerPresentPtr = getProcAddress(kernel32, "IsDebuggerPresent");
-        byte isDebOpCode = Unsafe.Read<byte>((void*)isDebuggerPresentPtr);
-
-        if (isDebOpCode == 0xE9)
-        {
-            Console.WriteLine($"IsDebuggerPresent hook detected.");
-            hooksFoundCount++;
-        }
-
-        IntPtr checkRemoteDebuggerPresentPtr = getProcAddress(kernel32, "CheckRemoteDebuggerPresent");
-        byte isCheckRemOpCode = Unsafe.Read<byte>((void*)checkRemoteDebuggerPresentPtr);
-
-        if (isCheckRemOpCode == 0xE9)
-        {
-            Console.WriteLine($"CheckRemoteDebuggerPresent hook detected.");
-            hooksFoundCount++;
-        }
-
-        var getIsAttached = typeof(Debugger).GetMethod("get_IsAttached");
-        if (getIsAttached != null)
-        {
-            IntPtr targetAddress = getIsAttached.MethodHandle.GetFunctionPointer();
-            byte opcode = Unsafe.Read<byte>((void*)targetAddress);
-            if (opcode == 0x33)
-            {
-                Console.WriteLine("Debugger.IsAttached hook detected.");
-            }
-        }
-        
-        IntPtr ntDll = NativeLibrary.Load("ntdll.dll");
-        IntPtr ntRaiseHardErrorPtr = getProcAddress(ntDll, "NtRaiseHardError");
-        byte ntRaiseHardErrorOpCode = Unsafe.Read<byte>((void*)ntRaiseHardErrorPtr);
-
-        if (ntRaiseHardErrorOpCode == 0xE9)
-        {
-            Console.WriteLine($"NtRaiseHardError hook detected.");
-            hooksFoundCount++;
-        }
+        hooksFoundCount += DetectHook(kernel32, "IsDebuggerPresent", 0xE9, "IsDebuggerPresent hook detected.");
+        hooksFoundCount += DetectHook(kernel32, "CheckRemoteDebuggerPresent", 0xE9, "CheckRemoteDebuggerPresent hook detected.");
+        hooksFoundCount += DetectHook(typeof(Debugger), "get_IsAttached", 0x33, "Debugger.IsAttached hook detected.");
+        hooksFoundCount += DetectHook(ntDll, "NtRaiseHardError", 0xE9, "NtRaiseHardError hook detected.");
+        hooksFoundCount += DetectHook(kernel32, "CloseHandle", 0xE9, "CloseHandle hook detected.");
 
         if (hooksFoundCount == 0)
         {
-            Console.WriteLine("No dnSpy hooks found!");
+            Console.WriteLine("No hooks found!");
         }
 
         Console.ReadLine();
 
         NativeLibrary.Free(kernel32);
+        NativeLibrary.Free(ntDll);
+    }
+
+    unsafe static int DetectHook(IntPtr module, string functionName, byte expectedOpcode, string hookMessage)
+    {
+        IntPtr getProcAddressPtr = NativeLibrary.GetExport(kernel32, "GetProcAddress");
+        var getProcAddress = Marshal.GetDelegateForFunctionPointer<GetProcAddressDelegate>(getProcAddressPtr);
+
+        IntPtr functionPtr = getProcAddress(module, functionName);
+        byte opcode = Unsafe.Read<byte>((void*)functionPtr);
+
+        if (opcode == expectedOpcode)
+        {
+            Console.WriteLine(hookMessage);
+            return 1;
+        }
+
+        return 0;
+    }
+
+    unsafe static int DetectHook(Type type, string methodName, byte expectedOpcode, string hookMessage)
+    {
+        var method = type.GetMethod(methodName);
+        if (method != null)
+        {
+            IntPtr targetAddress = method.MethodHandle.GetFunctionPointer();
+            byte opcode = Unsafe.Read<byte>((void*)targetAddress);
+
+            if (opcode == expectedOpcode)
+            {
+                Console.WriteLine(hookMessage);
+                return 1;
+            }
+        }
+
+        return 0;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate IntPtr GetProcAddressDelegate(IntPtr module, string procName);
-
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    internal delegate bool IsDebuggerPresentDelegate();
 }
